@@ -2,7 +2,7 @@ import random
 import sys
 import time
 
-from helper import distance, cities, distance_matrix
+from helper import cities, distance_matrix
 from simanneal import Annealer
 
 if sys.version_info.major >= 3:  # pragma: no cover

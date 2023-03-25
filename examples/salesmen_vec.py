@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 import math
-import random
+import mkl_random as random
 from collections import defaultdict
-from simanneal import Annealer
+from simanneal import TravellingSalesmanProblem
 
 
 def distance(a, b):
@@ -13,36 +13,6 @@ def distance(a, b):
     lat2, lon2 = math.radians(b[0]), math.radians(b[1])
     return math.acos(math.sin(lat1) * math.sin(lat2) +
                      math.cos(lat1) * math.cos(lat2) * math.cos(lon1 - lon2)) * R
-
-
-class TravellingSalesmanProblem(Annealer):
-
-    """Test annealer with a travelling salesman problem.
-    """
-
-    # pass extra data (the distance matrix) into the constructor
-    def __init__(self, state, distance_matrix):
-        self.distance_matrix = distance_matrix
-        super(TravellingSalesmanProblem, self).__init__(state)  # important!
-
-    def move(self):
-        """Swaps two cities in the route."""
-        # no efficiency gain, just proof of concept
-        # demonstrates returning the delta energy (optional)
-        initial_energy = self.energy()
-
-        a = random.randint(0, len(self.state) - 1)
-        b = random.randint(0, len(self.state) - 1)
-        self.state[a], self.state[b] = self.state[b], self.state[a]
-
-        return (a, b), self.energy() - initial_energy
-
-    def energy(self):
-        """Calculates the length of the route."""
-        e = 0
-        for i in range(len(self.state)):
-            e += self.distance_matrix[self.state[i-1]][self.state[i]]
-        return e
 
 
 if __name__ == '__main__':
@@ -79,7 +49,9 @@ if __name__ == '__main__':
     distance_matrix = defaultdict(dict)
     for ka, va in cities.items():
         for kb, vb in cities.items():
-            distance_matrix[ka][kb] = 0.0 if kb == ka else distance(va, vb)
+            d = 0.0 if kb == ka else distance(va, vb)
+            distance_matrix[ka][kb] = d
+            print("{fka}>{fkb}={fd:.2f}".format(fka=ka, fkb=kb, fd=d))
 
     tsp = TravellingSalesmanProblem(init_state, distance_matrix)
     tsp.copy_strategy = "slice"

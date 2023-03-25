@@ -43,10 +43,12 @@ class Annealer(object):
     copy_strategy = 'deepcopy'
     user_exit = False
     save_state_on_exit = False
+    pause = False # By default the annealing is starting immediately
+    tolerance = 1e-10  # dE cannot be computed accurately. Need to lower dE to 0 if lower tolerance threshold
+    E = None
+    best_energy = None
 
     # placeholders
-    best_state = None
-    best_energy = None
     start = None
 
     def __init__(self, initial_state=None, load_state=None):
@@ -57,6 +59,9 @@ class Annealer(object):
         else:
             raise ValueError('No valid values supplied for neither \
             initial_state nor load_state')
+
+        # Initialize system according to initial_state
+        self.best_state = self.copy_state(self.state)
 
         signal.signal(signal.SIGINT, self.set_user_exit)
 
@@ -75,7 +80,10 @@ class Annealer(object):
 
     @abc.abstractmethod
     def move(self):
-        """Create a state change"""
+        """
+        Create a state change.
+        Returns tuple: state_change and dE. If dE cannot be computed, it should return state_change and None
+        """
         pass
 
     @abc.abstractmethod
@@ -167,7 +175,7 @@ class Annealer(object):
                   file=sys.stderr, end="")
             sys.stderr.flush()
 
-    def anneal(self):
+    def anneal(self, callback=None, **kwargs):
         """Minimizes the energy of a system by simulated annealing.
 
         Parameters
@@ -198,35 +206,48 @@ class Annealer(object):
             self.update(step, T, E, None, None)
 
         # Attempt moves to new states
+        t1 = time.time()
         while step < self.steps and not self.user_exit:
-            step += 1
-            T = self.Tmax * math.exp(Tfactor * step / self.steps)
-            dE = self.move()
-            if dE is None:
-                E = self.energy()
-                dE = E - prevEnergy
+            if self.pause:
+                if callback is not None:
+                    callback(self, step)
             else:
-                E += dE
-            trials += 1
-            if dE > 0.0 and math.exp(-dE / T) < random.random():
-                # Restore previous state
-                self.state = self.copy_state(prevState)
-                E = prevEnergy
-            else:
-                # Accept new state and compare to best state
-                accepts += 1
-                if dE < 0.0:
-                    improves += 1
-                prevState = self.copy_state(self.state)
-                prevEnergy = E
-                if E < self.best_energy:
-                    self.best_state = self.copy_state(self.state)
-                    self.best_energy = E
-            if self.updates > 1:
-                if (step // updateWavelength) > ((step - 1) // updateWavelength):
-                    self.update(
-                        step, T, E, accepts / trials, improves / trials)
-                    trials = accepts = improves = 0
+                step += 1
+                T = self.Tmax * math.exp(Tfactor * step / self.steps)
+                _, dE = self.move()
+                if dE is None:
+                    E = self.energy()
+                    dE = E - prevEnergy
+                    if abs(dE) <= self.tolerance:
+                        dE = 0.0
+                else:
+                    if abs(dE) <= self.tolerance:
+                        dE = 0.0
+                    E += dE
+                trials += 1
+                if dE > 0.0 and math.exp(-dE / T) < random.random():
+                    # Restore previous state
+                    self.state = self.copy_state(prevState)
+                    E = prevEnergy
+                else:
+                    # Accept new state and compare to best state
+                    accepts += 1
+                    if dE < 0.0:
+                        improves += 1
+                    prevState = self.copy_state(self.state)
+                    prevEnergy = E
+                    if E < self.best_energy:
+                        self.best_state = self.copy_state(self.state)
+                        self.best_energy = E
+                if self.updates > 1:
+                    if (step // updateWavelength) > ((step - 1) // updateWavelength):
+                        dt = time.time() - t1
+                        self.update(
+                            step, T, E, accepts / trials, improves / trials)
+                        if callback is not None:
+                            callback(self, step, trials, accepts, improves, dt)
+                        trials = accepts = improves = 0
+                        t1 = time.time()
 
         self.state = self.copy_state(self.best_state)
         if self.save_state_on_exit:
@@ -250,13 +271,21 @@ class Annealer(object):
             prevEnergy = E
             accepts, improves = 0, 0
             for _ in range(steps):
-                dE = self.move()
+                __, dE = self.move()
                 if dE is None:
                     E = self.energy()
                     dE = E - prevEnergy
+                    if abs(dE) <= self.tolerance:
+                        dE = 0.0
+
                 else:
+                    if abs(dE) <= self.tolerance:
+                        dE = 0.0
                     E = prevEnergy + dE
-                if dE > 0.0 and math.exp(-dE / T) < random.random():
+
+                x = -dE / T
+                u = math.log(1.0 - random.random())
+                if dE > 0.0 and x < u:
                     self.state = self.copy_state(prevState)
                     E = prevEnergy
                 else:
@@ -277,10 +306,14 @@ class Annealer(object):
         self.update(step, T, E, None, None)
         while T == 0.0:
             step += 1
-            dE = self.move()
+            _, dE = self.move()
             if dE is None:
                 dE = self.energy() - E
+                if abs(dE) <= self.tolerance:
+                    dE = 0.0
             T = abs(dE)
+
+        self.tolerance = T * 1e-10
 
         # Search for Tmax - a temperature that gives 98% acceptance
         E, acceptance, improvement = run(T, steps)
